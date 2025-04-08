@@ -54,8 +54,9 @@ class Action:
                 "https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
             ),
         )
+        self.js_cache = Path("./data/cache/blender_render/js")
+        self.model_cache = Path("./data/uploads")
         self.download_stlview()
-        self.model_cache = tempfile.mkdtemp(prefix="modelcache_", dir=Path())
 
     def download_stlview(self):
         """Download all stlview files if they don't exist locally"""
@@ -70,8 +71,10 @@ class Action:
             "parser.min.js",
         ]
 
+        self.js_cache.mkdir(parents=True, exist_ok=True)
         for file in files:
-            if not (filepath := Path(file)).exists():
+            filepath = self.js_cache / file
+            if not filepath.exists():
                 print(f"Downloading {file}...")
                 try:
                     response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
@@ -202,22 +205,37 @@ class Action:
         return response.content
 
     async def generate_model_html(self, model: bytes) -> str:
-        stl_dirpath = tempfile.mkdtemp(dir=self.model_cache)
-        stl_filepath = (Path(stl_dirpath) / "model.stl").relative_to(Path().resolve())
+        stl_filepath = (
+            Path(tempfile.mktemp(prefix="model_", suffix=".stl", dir=self.model_cache))
+            .resolve()
+            .relative_to(Path().resolve())
+        )
         t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
         stl_html = await self.template_html(stl_filepath)
         await t1
         return stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
+        self.model_cache.mkdir(parents=True, exist_ok=True)
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
 
     async def template_html(self, stl_filepath: Path) -> str:
+        main_js = self.js_cache / "stl_viewer.min.js"
+        p = main_js.parent
+        backtrack_path = ""
+        while p != Path():
+            backtrack_path += "../"
+            p = p.parent
+            if p == Path("/"):
+                raise FileNotFoundError(
+                    "Attempt to find relative path reached filesystem root! This shouldn't ever happen!"
+                )
+
         return f"""
             <div id="stl_cont"></div>
 
-            <script src="stl_viewer.min.js"></script>
+            <script src="{main_js}"></script>
             <script>
                 document.addEventListener('DOMContentLoaded', function () {{
                     try {{
@@ -229,14 +247,13 @@ class Action:
                             {{
                                 models: [
                                     {{
-                                        filename: "{stl_filepath}",
+                                        filename: "{backtrack_path}{stl_filepath}",
                                         rotation: {{x: 0, y: 0, z: 0}},
                                         position: {{x: 0, y: 0, z: 0}},
                                         scale: 1.0
                                     }}
                                 ],
                                 background: {{color: "#FFFFFF"}},
-                                allow_drag_and_drop: true
                             }}
                         );
                         stl_viewer.onError = function (error) {{
