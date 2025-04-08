@@ -8,6 +8,7 @@ environment_variables: BLENDER_SERVER_URL, STLVIEW_CDN_URL
 """
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -15,6 +16,10 @@ from typing import Any, Callable, Dict, Optional
 
 import requests
 from pydantic import BaseModel, Field
+
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 async def dummy_emitter(_: Dict[str, Any]) -> None:
@@ -44,7 +49,6 @@ class Action:
         Initialize the Pipe class with default values and environment variables.
         Also, ensure the STLView library is present in the `./stlview` directory.
         """
-        self.type = "manifold"
         self.id = "BLENDER"
         self.name = "Blender: "
         self.valves = self.Valves(
@@ -75,21 +79,21 @@ class Action:
         for file in files:
             filepath = self.js_cache / file
             if not filepath.exists():
-                print(f"Downloading {file}...")
+                logger.debug(f"Downloading {file}...")
                 try:
                     response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
                     if response.status_code == 200:
                         with open(filepath, "wb") as f:
                             f.write(response.content)
-                        print(f"Downloaded {file} successfully.")
+                        logger.debug(f"Downloaded {file} successfully.")
                     else:
-                        print(
+                        logger.debug(
                             f"Failed to download {file}. Status code: {response.status_code}"
                         )
                 except Exception as e:
-                    print(f"Error downloading {file}: {e}")
+                    logger.debug(f"Error downloading {file}: {e}")
             else:
-                print(f"{file} already exists, skipping download.")
+                logger.debug(f"{file} already exists, skipping download.")
 
     async def action(
         self,
@@ -103,7 +107,7 @@ class Action:
         using the `bpy` library. Model code to be rendered must be given in the form
         of a python function with the type signature `model() -> bpy.types.Object`.
         """
-        print(f"action:{__name__}")
+        logger.debug(f"action:{__name__}")
 
         if __event_call__ is None:
             raise TypeError("__event_call__ must not be `None`")
@@ -117,7 +121,7 @@ class Action:
         await __event_emitter__(
             {
                 "type": "status",
-                "data": {"message": "Writing 3d model code...", "done": False},
+                "data": {"description": "Writing 3d model code...", "done": False},
             }
         )
         model_code = await self.get_model_code(
@@ -129,13 +133,13 @@ class Action:
         await __event_emitter__(
             {
                 "type": "status",
-                "data": {"message": "Writing 3d model code...", "done": True},
+                "data": {"description": "Writing 3d model code...", "done": True},
             }
         )
         await __event_emitter__(
             {
                 "type": "status",
-                "data": {"message": "Rendering 3d model...", "done": False},
+                "data": {"description": "Rendering 3d model...", "done": False},
             }
         )
         model_html = await self.render_model_to_html(
@@ -148,10 +152,18 @@ class Action:
         await __event_emitter__(
             {
                 "type": "status",
-                "data": {"message": "Rendering 3d model...", "done": True},
+                "data": {"description": "Rendering 3d model...", "done": True},
             }
         )
-        await __event_emitter__({"type": "html", "data": model_html})
+        await __event_emitter__(
+            {
+                "type": "message",
+                "data": {
+                    "description": "A 3d model rendered based on the blender code provided.",
+                    "content": model_html,
+                },
+            }
+        )
         await __event_emitter__(
             {
                 "type": "status",
@@ -170,22 +182,11 @@ class Action:
         Extract Blender model code from the request body.
 
         This implementation assumes the model code is provided in the body
-        under a key named 'model_code'. If not found, it raises a ValueError.
-
-        Args:
-            body: The request body containing the model code
-            __user__: Optional username
-            __event_emitter__: Function to emit events
-            __event_call__: Function to call events
-
-        Returns:
-            The Blender model code as a string
+        under a key named "model_code". If not found, it raises a ValueError.
         """
-        # Check if model_code is provided in the body
+        logger.debug("Fetching model code")
         if "model_code" not in body:
             raise ValueError("No model_code provided in the request body")
-
-        # Return the model code
         return body["model_code"]
 
     async def render_model_to_html(
@@ -196,6 +197,7 @@ class Action:
         __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
         __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> str:
+        logger.debug("Rendering model to html")
         model = await self.render_model(
             model_code,
             body,
@@ -206,6 +208,7 @@ class Action:
         model_html = await self.generate_model_html(model)
         if not model_html:
             raise requests.RequestException("Request to blender server failed")
+        logger.debug("Model rendered!")
         return model_html
 
     async def render_model(
@@ -216,15 +219,18 @@ class Action:
         __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
         __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> bytes:
+        logger.debug("Sending model_code to render server")
         payload = {"model_code": model_code}
         response = requests.post(
             f"{self.valves.BLENDER_SERVER_URL}/create_model",
             json=payload,
         )
+        logger.debug("Render server response received!")
         response.raise_for_status()
         return response.content
 
     async def generate_model_html(self, model: bytes) -> str:
+        logger.debug("Generating model html")
         stl_filepath = (
             Path(tempfile.mktemp(prefix="model_", suffix=".stl", dir=self.model_cache))
             .resolve()
@@ -233,14 +239,18 @@ class Action:
         t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
         stl_html = await self.template_html(stl_filepath)
         await t1
+        logger.debug("Model html generated!")
         return stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
         self.model_cache.mkdir(parents=True, exist_ok=True)
+        logger.debug("Writing model binary to model cache")
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
+        logger.debug("Model cached!")
 
     async def template_html(self, stl_filepath: Path) -> str:
+        logger.debug("Generating html from template")
         main_js = self.js_cache / "stl_viewer.min.js"
         p = main_js.parent
         backtrack_path = ""
