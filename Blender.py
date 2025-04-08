@@ -34,9 +34,12 @@ class Action:
         BLENDER_SERVER_URL: str = Field(
             default="", description="URL for your Blender render server"
         )
-        STLVIEW_CDN_URL: str = Field(default="", description="URL for your STLView CDN")
+        STLVIEW_CDN_URL: str = Field(
+            default="https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
+            description="URL for your STLView CDN",
+        )
 
-    def __init__(self, blender_server_url: str = "", stlview_cdn_url: str = ""):
+    def __init__(self):
         """
         Initialize the Pipe class with default values and environment variables.
         Also, ensure the STLView library is present in the `./stlview` directory.
@@ -45,8 +48,11 @@ class Action:
         self.id = "BLENDER"
         self.name = "Blender: "
         self.valves = self.Valves(
-            BLENDER_SERVER_URL=os.getenv("BLENDER_SERVER_URL", blender_server_url),
-            STLVIEW_CDN_URL=os.getenv("STLVIEW_CDN_URL", stlview_cdn_url),
+            BLENDER_SERVER_URL=os.getenv("BLENDER_SERVER_URL", ""),
+            STLVIEW_CDN_URL=os.getenv(
+                "STLVIEW_CDN_URL",
+                "https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
+            ),
         )
         self.download_stlview()
         self.model_cache = tempfile.mkdtemp(prefix="modelcache_", dir=Path())
