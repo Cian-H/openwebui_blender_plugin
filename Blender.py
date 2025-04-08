@@ -166,7 +166,27 @@ class Action:
         __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
         __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> str:
-        raise NotImplementedError
+        """
+        Extract Blender model code from the request body.
+
+        This implementation assumes the model code is provided in the body
+        under a key named 'model_code'. If not found, it raises a ValueError.
+
+        Args:
+            body: The request body containing the model code
+            __user__: Optional username
+            __event_emitter__: Function to emit events
+            __event_call__: Function to call events
+
+        Returns:
+            The Blender model code as a string
+        """
+        # Check if model_code is provided in the body
+        if "model_code" not in body:
+            raise ValueError("No model_code provided in the request body")
+
+        # Return the model code
+        return body["model_code"]
 
     async def render_model_to_html(
         self,
