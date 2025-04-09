@@ -1,24 +1,19 @@
 """
 title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
-version: 0.0.1
+version: 0.0.2
 license: MIT
 requirements: pydantic, requests
 environment_variables: BLENDER_SERVER_URL, STLVIEW_CDN_URL
 """
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import requests
 from pydantic import BaseModel, Field
-
-
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 
 async def dummy_emitter(_: Dict[str, Any]) -> None:
@@ -78,21 +73,13 @@ class Action:
         for file in files:
             filepath = self.js_cache / file
             if not filepath.exists():
-                print(f"Downloading {file}...")
                 try:
                     response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
                     if response.status_code == 200:
                         with open(filepath, "wb") as f:
                             f.write(response.content)
-                        print(f"Downloaded {file} successfully.")
-                    else:
-                        print(
-                            f"Failed to download {file}. Status code: {response.status_code}"
-                        )
                 except Exception as e:
-                    print(f"Error downloading {file}: {e}")
-            else:
-                print(f"{file} already exists, skipping download.")
+                    raise requests.RequestException(f"Error downloading {file}: {e}")
 
     async def action(
         self,
@@ -106,13 +93,9 @@ class Action:
         using the `bpy` library. Model code to be rendered must be given in the form
         of a python function with the type signature `model() -> bpy.types.Object`.
         """
-        print(f"action:{__name__}")
-
         msg_id = body["id"]
         chat_id = body["chat_id"]
         msg = await self.get_msg(body, msg_id)
-
-        print("msg found")
 
         if __event_call__ is None:
             raise TypeError("__event_call__ must not be `None`")
@@ -123,10 +106,7 @@ class Action:
                 "data": {"description": "Writing 3d model code...", "done": False},
             }
         )
-        print("creating model code")
-        print(msg)
         model_code = await self.get_model_code(msg["content"])
-        print("model code created")
         await __event_emitter__(
             {
                 "type": "status",
@@ -139,15 +119,7 @@ class Action:
                 "data": {"description": "Rendering 3d model...", "done": False},
             }
         )
-        model_html = await self.render_model_to_html(
-            model_code,
-            body,
-            chat_id,
-            msg_id,
-            __user__=__user__,
-            __event_emitter__=__event_emitter__,
-            __event_call__=__event_call__,
-        )
+        model_html = await self.render_model_to_html(model_code, chat_id, msg_id)
         await __event_emitter__(
             {
                 "type": "status",
@@ -184,91 +156,64 @@ class Action:
         as a python code block containing a definition for a function called
         `model`. If not found, it raises a ValueError.
         """
-        print("method:get_model_code")
         lines = content.split("\n")
-        print("lines split")
         try:
             code_start, code_end = lines.index("```python"), lines.index("```")
         except ValueError:
             raise ValueError(
                 "No code block containing `model()` function found in message"
             )
-        print("indeces found")
         if code_start < code_end:
-            print("method:get_model_code:branch1")
             code_block = "\n".join(lines[code_start + 1 : code_end])
             if "def model(" in code_block:
                 return code_block
         else:
-            print("method:get_model_code:branch2")
             code_end = code_start
-        print("method:get_model_code:recurse")
         return await self.get_model_code("\n".join(lines[code_end + 1 :]))
 
     async def render_model_to_html(
         self,
         model_code: str,
-        body: Dict,
         chat_id: str,
         msg_id: str,
-        __user__: Optional[str] = None,
-        __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
-        __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> str:
-        print("Rendering model to html")
         model = await self.render_model(
             model_code,
-            body,
-            __user__=__user__,
-            __event_emitter__=__event_emitter__,
-            __event_call__=__event_call__,
         )
         model_html = await self.generate_model_html(model, chat_id, msg_id)
         if not model_html:
             raise requests.RequestException("Request to blender server failed")
-        print("Model rendered!")
         return model_html
 
     async def render_model(
         self,
         model_code: str,
-        body: Dict,
-        __user__: Optional[str] = None,
-        __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
-        __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> bytes:
-        print("Sending model_code to render server")
         payload = {"model_code": model_code}
         response = requests.post(
             f"{self.valves.BLENDER_SERVER_URL}/create_model",
             json=payload,
         )
-        print("Render server response received!")
         response.raise_for_status()
         return response.content
 
     async def generate_model_html(self, model: bytes, chat_id: str, msg_id: str) -> str:
-        print("Generating model html")
         stl_filepath = (
-            Path(f"{self.model_cache}{chat_id}-model-{msg_id}.stl")
+            Path(f"{self.model_cache}/{chat_id}-model-{msg_id}.stl")
             .resolve()
             .relative_to(Path().resolve())
         )
         t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
         stl_html = await self.template_html(stl_filepath)
         await t1
-        print("Model html generated!")
         return stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
         self.model_cache.mkdir(parents=True, exist_ok=True)
-        print("Writing model binary to model cache")
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
-        print("Model cached!")
 
     async def template_html(self, stl_filepath: Path) -> str:
-        print("Generating html from template")
         main_js = self.js_cache / "stl_viewer.min.js"
         p = main_js.parent
         backtrack_path = ""
