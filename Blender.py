@@ -78,11 +78,13 @@ class Action:
             "parser.min.js",
         ]
 
+        print("OpenWebUI/BLENDER - Caching stlview JS files")
         js_cache = Path("data") / self.cache
         js_cache.mkdir(parents=True, exist_ok=True)
         for file in files:
             filepath = js_cache / file
             if not filepath.exists():
+                print(f"OpenWebUI/BLENDER/download_stlview - Downloading {file}")
                 try:
                     response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
                     if response.status_code == 200:
@@ -90,6 +92,10 @@ class Action:
                             f.write(response.content)
                 except Exception as e:
                     raise requests.RequestException(f"Error downloading {file}: {e}")
+            else:
+                print(
+                    f"OpenWebUI/BLENDER/download_stlview - Skipping {file} (already exists)"
+                )
 
     async def action(
         self,
@@ -103,6 +109,8 @@ class Action:
         using the `bpy` library. Model code to be rendered must be given in the form
         of a python function with the type signature `model() -> bpy.types.Object`.
         """
+        print("OpenWebUI/BLENDER/action - Starting action...")
+
         msg_id = body["id"]
         chat_id = body["chat_id"]
         msg = await self.get_msg(body, msg_id)
@@ -110,6 +118,7 @@ class Action:
         if __event_call__ is None:
             raise TypeError("__event_call__ must not be `None`")
 
+        print("OpenWebUI/BLENDER/action - Writing 3d model code...")
         await __event_emitter__(
             {
                 "type": "status",
@@ -123,6 +132,18 @@ class Action:
                 "data": {"description": "Writing 3d model code...", "done": True},
             }
         )
+
+        if model_code == "":
+            print("OpenWebUI/BLENDER/action - No model code found!")
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "No model code found!", "done": True},
+                }
+            )
+            return
+
+        print("OpenWebUI/BLENDER/action - Rendering model to HTML...")
         await __event_emitter__(
             {
                 "type": "status",
@@ -136,6 +157,7 @@ class Action:
                 "data": {"description": "Rendering 3d model...", "done": True},
             }
         )
+        print("OpenWebUI/BLENDER/action - Displaying 3d model as artifact...")
         await __event_emitter__(
             {
                 "type": "status",
@@ -157,14 +179,19 @@ class Action:
                 "data": {"description": "Displaying 3d model...", "done": True},
             }
         )
+        print("OpenWebUI/BLENDER/action - Action complete!")
 
     @staticmethod
     async def get_msg(body: Dict, msg_id: str) -> Dict:
+        print("OpenWebUI/BLENDER/get_msg - Getting message...")
         messages = body["messages"]
         msg = {}
         for msg in messages:
             if msg["id"] == msg_id:
                 break
+        else:
+            raise ValueError(f"message {msg_id} not found!")
+        print("OpenWebUI/BLENDER/get_msg - Message found!")
         return msg
 
     async def get_model_code(
@@ -178,6 +205,10 @@ class Action:
         as a python code block containing a definition for a function called
         `model`. If not found, it raises a ValueError.
         """
+        if content == "":
+            print("OpenWebUI/BLENDER/get_model_code - Empty content received")
+            return ""
+        print("OpenWebUI/BLENDER/get_model_code - Searching for model code block")
         lines = content.split("\n")
         try:
             code_start, code_end = lines.index("```python"), lines.index("```")
@@ -185,12 +216,17 @@ class Action:
             raise ValueError(
                 "No code block containing `model()` function found in message"
             )
+        print("OpenWebUI/BLENDER/get_model_code - Python code block found!")
         if code_start < code_end:
             code_block = "\n".join(lines[code_start + 1 : code_end])
             if "def model(" in code_block:
+                print(
+                    "OpenWebUI/BLENDER/get_model_code - Valid model code block found!"
+                )
                 return code_block
         else:
             code_end = code_start
+        print("OpenWebUI/BLENDER/get_model_code - Model code block invalid!")
         return await self.get_model_code("\n".join(lines[code_end + 1 :]))
 
     async def render_model_to_html(
@@ -199,12 +235,14 @@ class Action:
         chat_id: str,
         msg_id: str,
     ) -> str:
+        print("OpenWebUI/BLENDER/render_model_to_html - Rendering model to HTML...")
         model = await self.render_model(
             model_code,
         )
         model_html = await self.generate_model_html(model, chat_id, msg_id)
         if not model_html:
             raise requests.RequestException("Request to blender server failed")
+        print("OpenWebUI/BLENDER/render_model_to_html - Model HTML rendered!")
         return model_html
 
     async def render_model(
@@ -212,33 +250,43 @@ class Action:
         model_code: str,
     ) -> bytes:
         payload = {"model_code": model_code}
+        print(
+            "OpenWebUI/BLENDER/render_model - Requesting STL from blender render server..."
+        )
         response = requests.post(
             f"{self.valves.BLENDER_SERVER_URL}/create_model",
             json=payload,
         )
         response.raise_for_status()
+        print("OpenWebUI/BLENDER/render_model - Response received!")
         return response.content
 
     async def generate_model_html(self, model: bytes, chat_id: str, msg_id: str) -> str:
+        print("OpenWebUI/BLENDER/generate_model_html - Generating model HTML...")
         model_cache = Path("data") / self.cache / "models"
-        stl_filename = f"{chat_id}-model-{msg_id}.stl"
+        existing_models = len([*model_cache.glob(f"{chat_id}-model-{msg_id}*.stl")])
+        stl_filename = f"{chat_id}-model-{msg_id}-{existing_models}.stl"
         stl_filepath = (
-            Path(f"{model_cache}/{stl_filename}")
-            .resolve()
-            .relative_to(Path().resolve())
+            (model_cache / stl_filename).resolve().relative_to(Path().resolve())
         )
         model_cache.mkdir(parents=True, exist_ok=True)
         t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
         stl_html = await self.template_html(stl_filename)
+        print("OpenWebUI/BLENDER/generate_model_html - HTML templated!")
         await t1
+        print("OpenWebUI/BLENDER/generate_model_html - Model HTML generated!")
         return stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
+        print("OpenWebUI/BLENDER/write_model_to_cache - Writing model data to cache...")
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
+        print("OpenWebUI/BLENDER/write_model_to_cache - Model data cached!")
 
     async def template_html(self, stl_filename: str) -> str:
+        print("OpenWebUI/BLENDER/template_html - Templating HTML...")
         return f"""<script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
+<div id="stl_cont" style="width: 500px; height: 500px;"></div>
 <script>
     var stl_viewer = new StlViewer(
         document.getElementById("stl_cont"),
@@ -254,5 +302,4 @@ class Action:
             background: {{color: "#FFFFFF"}},
         }}
     );
-</script>
-<div id="stl_cont" style="width: 500px; height: 500px;"></div>"""
+</script>"""
