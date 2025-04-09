@@ -4,10 +4,11 @@ author: Cian Hughes
 version: 0.0.2
 license: MIT
 requirements: pydantic, requests
-environment_variables: BLENDER_SERVER_URL, STLVIEW_CDN_URL
+environment_variables: OPENWEBUI_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
 """
 
 import asyncio
+
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -20,6 +21,13 @@ async def dummy_emitter(_: Dict[str, Any]) -> None:
     pass
 
 
+class FileData(BaseModel):
+    id: str
+    filename: str
+    meta: Dict[str, Any]
+    path: str
+
+
 class Action:
     """
     An action for generating and displaying a 3d model from a blender `bpy` python script.
@@ -30,6 +38,7 @@ class Action:
         Pydantic model for storing the server url.
         """
 
+        OPENWEBUI_URL: str = Field(default="", description="URL for the OpenWebUI")
         BLENDER_SERVER_URL: str = Field(
             default="", description="URL for your Blender render server"
         )
@@ -51,9 +60,9 @@ class Action:
                 "STLVIEW_CDN_URL",
                 "https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
             ),
+            OPENWEBUI_URL=os.getenv("OPENWEBUI_URL", ""),
         )
-        self.js_cache = Path("./data/cache/blender_render/js")
-        self.model_cache = Path("./data/uploads")
+        self.cache = "cache/blender_render"
         self.download_stlview()
 
     def download_stlview(self):
@@ -69,9 +78,10 @@ class Action:
             "parser.min.js",
         ]
 
-        self.js_cache.mkdir(parents=True, exist_ok=True)
+        js_cache = Path("data") / self.cache
+        js_cache.mkdir(parents=True, exist_ok=True)
         for file in files:
-            filepath = self.js_cache / file
+            filepath = js_cache / file
             if not filepath.exists():
                 try:
                     response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
@@ -128,11 +138,23 @@ class Action:
         )
         await __event_emitter__(
             {
+                "type": "status",
+                "data": {"description": "Displaying 3d model...", "done": False},
+            }
+        )
+        await __event_emitter__(
+            {
                 "type": "message",
                 "data": {
                     "description": "A 3d model rendered based on the blender code provided.",
-                    "content": model_html,
+                    "content": f"\n\n```html\n{model_html}\n```\n",
                 },
+            }
+        )
+        await __event_emitter__(
+            {
+                "type": "status",
+                "data": {"description": "Displaying 3d model...", "done": True},
             }
         )
 
@@ -198,64 +220,60 @@ class Action:
         return response.content
 
     async def generate_model_html(self, model: bytes, chat_id: str, msg_id: str) -> str:
+        model_cache = Path("data") / self.cache / "models"
+        stl_filename = f"{chat_id}-model-{msg_id}.stl"
         stl_filepath = (
-            Path(f"{self.model_cache}/{chat_id}-model-{msg_id}.stl")
+            Path(f"{model_cache}/{stl_filename}")
             .resolve()
             .relative_to(Path().resolve())
         )
+        model_cache.mkdir(parents=True, exist_ok=True)
         t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
-        stl_html = await self.template_html(stl_filepath)
+        stl_html = await self.template_html(stl_filename)
         await t1
         return stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
-        self.model_cache.mkdir(parents=True, exist_ok=True)
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
 
-    async def template_html(self, stl_filepath: Path) -> str:
-        main_js = self.js_cache / "stl_viewer.min.js"
-        p = main_js.parent
-        backtrack_path = ""
-        while p != Path():
-            backtrack_path += "../"
-            p = p.parent
-            if p == Path("/"):
-                raise FileNotFoundError(
-                    "Attempt to find relative path reached filesystem root! This shouldn't ever happen!"
-                )
-
-        return f"""
-            <div id="stl_cont"></div>
-
-            <script src="{main_js}"></script>
-            <script>
-                document.addEventListener('DOMContentLoaded', function () {{
-                    try {{
-                        if (typeof StlViewer === 'undefined') {{
-                            throw new Error('StlViewer library not loaded');
-                        }}
-                        var stl_viewer = new StlViewer(
-                            document.getElementById("stl_cont"),
+    async def template_html(self, stl_filename: str) -> str:
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>3d visualisation of model</title>
+    <script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {{
+            try {{
+                if (typeof StlViewer === 'undefined') {{
+                    throw new Error('StlViewer library not loaded');
+                }}
+                var stl_viewer = new StlViewer(
+                    document.getElementById("stl_cont"),
+                    {{
+                        models: [
                             {{
-                                models: [
-                                    {{
-                                        filename: "{backtrack_path}{stl_filepath}",
-                                        rotation: {{x: 0, y: 0, z: 0}},
-                                        position: {{x: 0, y: 0, z: 0}},
-                                        scale: 1.0
-                                    }}
-                                ],
-                                background: {{color: "#FFFFFF"}},
+                                filename: "{self.valves.OPENWEBUI_URL}/{self.cache}/models/{stl_filename}",
+                                rotation: {{x: 0, y: 0, z: 0}},
+                                position: {{x: 0, y: 0, z: 0}},
+                                scale: 1.0
                             }}
-                        );
-                        stl_viewer.onError = function (error) {{
-                            console.error('STL Viewer error:', error);
-                        }};
-                        console.log('STL Viewer initialized successfully');
-                    }} catch (error) {{
-                        console.error('Error initializing STL Viewer:', error);
+                        ],
+                        background: {{color: "#FFFFFF"}},
                     }}
-                }});
-            </script>
-        """
+                );
+                stl_viewer.onError = function (error) {{
+                    console.error('STL Viewer error:', error);
+                }};
+                console.log('STL Viewer initialized successfully');
+            }} catch (error) {{
+                console.error('Error initializing STL Viewer:', error);
+            }}
+        }});
+    </script>
+</head>
+<body>
+    <div id="stl_cont" style="width: 500px; height: 500px;"></div>
+</body>
+</html>"""
