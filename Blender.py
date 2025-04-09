@@ -238,42 +238,21 @@ class Action:
             stl_file.write(model)
 
     async def template_html(self, stl_filename: str) -> str:
-        return f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>3d visualisation of model</title>
-    <script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {{
-            try {{
-                if (typeof StlViewer === 'undefined') {{
-                    throw new Error('StlViewer library not loaded');
+        return f"""<script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
+<script>
+    var stl_viewer = new StlViewer(
+        document.getElementById("stl_cont"),
+        {{
+            models: [
+                {{
+                    filename: "{self.valves.OPENWEBUI_URL}/{self.cache}/models/{stl_filename}",
+                    rotation: {{x: 0, y: 0, z: 0}},
+                    position: {{x: 0, y: 0, z: 0}},
+                    scale: 1.0
                 }}
-                var stl_viewer = new StlViewer(
-                    document.getElementById("stl_cont"),
-                    {{
-                        models: [
-                            {{
-                                filename: "{self.valves.OPENWEBUI_URL}/{self.cache}/models/{stl_filename}",
-                                rotation: {{x: 0, y: 0, z: 0}},
-                                position: {{x: 0, y: 0, z: 0}},
-                                scale: 1.0
-                            }}
-                        ],
-                        background: {{color: "#FFFFFF"}},
-                    }}
-                );
-                stl_viewer.onError = function (error) {{
-                    console.error('STL Viewer error:', error);
-                }};
-                console.log('STL Viewer initialized successfully');
-            }} catch (error) {{
-                console.error('Error initializing STL Viewer:', error);
-            }}
-        }});
-    </script>
-</head>
-<body>
-    <div id="stl_cont" style="width: 500px; height: 500px;"></div>
-</body>
-</html>"""
+            ],
+            background: {{color: "#FFFFFF"}},
+        }}
+    );
+</script>
+<div id="stl_cont" style="width: 500px; height: 500px;"></div>"""
