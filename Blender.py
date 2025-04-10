@@ -4,17 +4,17 @@ author: Cian Hughes
 version: 0.0.2
 license: MIT
 requirements: pydantic, requests
-environment_variables: OPENWEBUI_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
+environment_variables: OPENWEBUI_BASE_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
 """
 
 import asyncio
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import requests
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 async def dummy_emitter(_: Dict[str, Any]) -> None:
@@ -38,14 +38,26 @@ class Action:
         Pydantic model for storing the server url.
         """
 
-        OPENWEBUI_URL: str = Field(default="", description="URL for the OpenWebUI")
+        OPENWEBUI_BASE_URL: str = Field(
+            default="",
+            description="Base URL for the OpenWebUI",
+            validate_default=True,
+        )
         BLENDER_SERVER_URL: str = Field(
-            default="", description="URL for your Blender render server"
+            default="",
+            description="URL for your Blender render server",
+            validate_default=True,
         )
         STLVIEW_CDN_URL: str = Field(
             default="https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
             description="URL for your STLView CDN",
+            validate_default=True,
         )
+
+        @field_validator("OPENWEBUI_BASE_URL", "BLENDER_SERVER_URL", "STLVIEW_CDN_URL")
+        @staticmethod
+        def ensure_trailing_slash(s: str) -> str:
+            return f"{s}/" if s and (s[-1] != "/") else s
 
     def __init__(self):
         """
@@ -60,9 +72,9 @@ class Action:
                 "STLVIEW_CDN_URL",
                 "https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
             ),
-            OPENWEBUI_URL=os.getenv("OPENWEBUI_URL", ""),
+            OPENWEBUI_BASE_URL=os.getenv("OPENWEBUI_BASE_URL", ""),
         )
-        self.cache = "cache/blender_render"
+        self.cache = "cache/blender_render/"
         self.download_stlview()
 
     def download_stlview(self):
@@ -150,7 +162,9 @@ class Action:
                 "data": {"description": "Rendering 3d model...", "done": False},
             }
         )
-        model_html = await self.render_model_to_html(model_code, chat_id, msg_id)
+        model_filename, model_html = await self.render_model_to_html(
+            model_code, chat_id, msg_id
+        )
         await __event_emitter__(
             {
                 "type": "status",
@@ -169,7 +183,7 @@ class Action:
                 "type": "message",
                 "data": {
                     "description": "A 3d model rendered based on the blender code provided.",
-                    "content": f"\n\n```html\n{model_html}\n```\n",
+                    "content": f"\n\n```html\n{model_html}\n```\n\n[Download model]({self.valves.OPENWEBUI_BASE_URL}{self.cache}models/{model_filename})\n",
                 },
             }
         )
@@ -234,16 +248,18 @@ class Action:
         model_code: str,
         chat_id: str,
         msg_id: str,
-    ) -> str:
+    ) -> Tuple[str, str]:
         print("OpenWebUI/BLENDER/render_model_to_html - Rendering model to HTML...")
         model = await self.render_model(
             model_code,
         )
-        model_html = await self.generate_model_html(model, chat_id, msg_id)
+        model_filename, model_html = await self.generate_model_html(
+            model, chat_id, msg_id
+        )
         if not model_html:
             raise requests.RequestException("Request to blender server failed")
         print("OpenWebUI/BLENDER/render_model_to_html - Model HTML rendered!")
-        return model_html
+        return model_filename, model_html
 
     async def render_model(
         self,
@@ -254,14 +270,16 @@ class Action:
             "OpenWebUI/BLENDER/render_model - Requesting STL from blender render server..."
         )
         response = requests.post(
-            f"{self.valves.BLENDER_SERVER_URL}/create_model",
+            f"{self.valves.BLENDER_SERVER_URL}create_model",
             json=payload,
         )
         response.raise_for_status()
         print("OpenWebUI/BLENDER/render_model - Response received!")
         return response.content
 
-    async def generate_model_html(self, model: bytes, chat_id: str, msg_id: str) -> str:
+    async def generate_model_html(
+        self, model: bytes, chat_id: str, msg_id: str
+    ) -> Tuple[str, str]:
         print("OpenWebUI/BLENDER/generate_model_html - Generating model HTML...")
         model_cache = Path("data") / self.cache / "models"
         existing_models = len([*model_cache.glob(f"{chat_id}-model-{msg_id}*.stl")])
@@ -275,7 +293,7 @@ class Action:
         print("OpenWebUI/BLENDER/generate_model_html - HTML templated!")
         await t1
         print("OpenWebUI/BLENDER/generate_model_html - Model HTML generated!")
-        return stl_html
+        return stl_filename, stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
         print("OpenWebUI/BLENDER/write_model_to_cache - Writing model data to cache...")
@@ -285,14 +303,14 @@ class Action:
 
     async def template_html(self, stl_filename: str) -> str:
         print("OpenWebUI/BLENDER/template_html - Templating HTML...")
-        return f"""<script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
+        return f"""<script src="{self.valves.OPENWEBUI_BASE_URL}{self.cache}/js/stl_viewer.min.js"></script>
 <script>
     var stl_viewer = new StlViewer(
         document.getElementById("stl_cont"),
         {{
             models: [
                 {{
-                    filename: "{self.valves.OPENWEBUI_URL}/{self.cache}/models/{stl_filename}",
+                    filename: "{self.valves.OPENWEBUI_BASE_URL}{self.cache}models/{stl_filename}",
                     rotation: {{x: 0, y: 0, z: 0}},
                     position: {{x: 0, y: 0, z: 0}},
                     scale: 1.0
