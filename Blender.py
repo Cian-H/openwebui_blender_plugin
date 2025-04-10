@@ -286,7 +286,6 @@ class Action:
     async def template_html(self, stl_filename: str) -> str:
         print("OpenWebUI/BLENDER/template_html - Templating HTML...")
         return f"""<script src="{self.valves.OPENWEBUI_URL}/{self.cache}/js/stl_viewer.min.js"></script>
-<div id="stl_cont" style="width: 500px; height: 500px;"></div>
 <script>
     var stl_viewer = new StlViewer(
         document.getElementById("stl_cont"),
@@ -302,4 +301,5 @@ class Action:
             background: {{color: "#FFFFFF"}},
         }}
     );
-</script>"""
+</script>
+<div id="stl_cont" style="width: 500px; height: 500px;"></div>"""
