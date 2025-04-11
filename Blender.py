@@ -1,7 +1,8 @@
 """
 title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
-version: 0.0.2
+author_url: https://github.com/Cian-H
+version: 0.1.0
 license: MIT
 requirements: httpx, pydantic
 environment_variables: OPENWEBUI_BASE_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
