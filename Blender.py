@@ -90,9 +90,9 @@ class Action:
             OPENWEBUI_BASE_URL=os.getenv("OPENWEBUI_BASE_URL", ""),
         )
         self.cache = "cache/blender_render/"
-        asyncio.ensure_future(self.download_stlview(), loop=asyncio.get_event_loop())
+        self.download_stlview()
 
-    async def download_stlview(self):
+    def download_stlview(self):
         """
         Download all stlview files if they don't exist locally.
 
@@ -118,10 +118,8 @@ class Action:
             if not filepath.exists():
                 print(f"OpenWebUI/BLENDER/download_stlview - Downloading {file}")
                 try:
-                    async with httpx.AsyncClient() as client:
-                        response = await client.get(
-                            f"{self.valves.STLVIEW_CDN_URL}{file}"
-                        )
+                    with httpx.AsyncClient() as client:
+                        response = client.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
                         if response.status_code == 200:
                             with open(filepath, "wb") as f:
                                 f.write(response.content)
