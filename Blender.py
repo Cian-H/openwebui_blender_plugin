@@ -22,13 +22,6 @@ async def dummy_emitter(_: Dict[str, Any]) -> None:
     pass
 
 
-class FileData(BaseModel):
-    id: str
-    filename: str
-    meta: Dict[str, Any]
-    path: str
-
-
 class Action:
     """
     An action for generating and displaying a 3d model from a blender `bpy` python script.
@@ -322,9 +315,7 @@ class Action:
             httpx.RequestError: If an error response is received from the blender render server.
         """
         print("OpenWebUI/BLENDER/render_model_to_html - Rendering model to HTML...")
-        model = await self.render_model(
-            model_code,
-        )
+        model = await self.render_model(model_code)
         model_filename, model_html = await self.generate_model_html(
             model, chat_id, msg_id
         )
