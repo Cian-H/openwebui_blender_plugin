@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 async def dummy_emitter(_: Dict[str, Any]) -> None:
+    """A dummy emitter to satisfy type checks in the `Action.action` method."""
     pass
 
 
@@ -31,38 +32,58 @@ class FileData(BaseModel):
 class Action:
     """
     An action for generating and displaying a 3d model from a blender `bpy` python script.
+
+    Attributes:
+        id (str): The id tag for this action.
+        name (str): The logging name for the action.
+        valves (self.Valves): A pydantic model for storing WebUI accessible settings.
+        cache (str): The path to the action's cache in openwebui's storage.
     """
 
     class Valves(BaseModel):
         """
         Pydantic model for storing the server url.
+
+        Attributes:
+            OPENWEBUI_BASE_URL (str): The base URL for the OpenWebUI instance.
+            BLENDER_SERVER_URL (str): The URL for the Blender render server.
+            STLVIEW_CDN_URL (str): The URL for the STLView CDN to be used.
         """
 
         OPENWEBUI_BASE_URL: str = Field(
             default="",
-            description="Base URL for the OpenWebUI",
+            description="The base URL for the OpenWebUI instance.",
             validate_default=True,
         )
         BLENDER_SERVER_URL: str = Field(
             default="",
-            description="URL for your Blender render server",
+            description="The URL for your Blender render server.",
             validate_default=True,
         )
         STLVIEW_CDN_URL: str = Field(
             default="https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
-            description="URL for your STLView CDN",
+            description="The URL for the STLView CDN to be used.",
             validate_default=True,
         )
 
         @field_validator("OPENWEBUI_BASE_URL", "BLENDER_SERVER_URL", "STLVIEW_CDN_URL")
         @staticmethod
         def ensure_trailing_slash(s: str) -> str:
+            """
+            Ensures that the given string ends in a trailing forward slash ("/").
+
+            Args:
+                s (str): The string being validated.
+
+            Returns:
+                str: The validated string.
+            """
             return f"{s}/" if s and (s[-1] != "/") else s
 
     def __init__(self):
         """
-        Initialize the Pipe class with default values and environment variables.
-        Also, ensure the STLView library is present in the `./stlview` directory.
+        Initialize the Action class with default values and environment variables.
+        Also, ensure the STLView library is present in the blender_render cache.
         """
         self.id = "BLENDER"
         self.name = "Blender: "
@@ -123,11 +144,17 @@ class Action:
         __user__: Optional[str] = None,
         __event_emitter__: Callable[[Dict[str, Any]], Any] = dummy_emitter,
         __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
-    ) -> Optional[Dict]:
+    ):
         """
         An action that renders and displays stl models from generated python code
         using the `bpy` library. Model code to be rendered must be given in the form
         of a python function with the type signature `model() -> bpy.types.Object`.
+
+        Args:
+            body (Dict): The body of the conversation for which the action was called.
+            __user__ (Optional[str]): The user calling the action.
+            __event_emitter__ (Callable[[Dict[str, Any]], Any]): The event emitter for the calling context.
+            __event_call__ (Optional[Callable[[Dict[str, Any]], Any]]): The event call context.
         """
         print("OpenWebUI/BLENDER/action - Starting action...")
 
@@ -205,6 +232,19 @@ class Action:
 
     @staticmethod
     async def get_msg(body: Dict, msg_id: str) -> Dict:
+        """
+        Finds a specific message in the body of the conversation based on the message id.
+
+        Args:
+            body (Dict): The body of the conversation.
+            msg_id (str): The ID of the message to be retrieved.
+
+        Returns:
+            Dict: The message with the given ID.
+
+        Raises:
+            ValueError: If no message matching ID is found.
+        """
         print("OpenWebUI/BLENDER/get_msg - Getting message...")
         messages = body["messages"]
         msg = {}
@@ -226,6 +266,15 @@ class Action:
         This implementation assumes the model code is provided in the body
         as a python code block containing a definition for a function called
         `model`. If not found, it raises a ValueError.
+
+        Args:
+            content (str): The content of the message in which to search for a valid code block.
+
+        Returns:
+            str: The valid code block, if one is found.
+
+        Raises:
+            ValueError: If no valid code block is found in the message content.
         """
         if content == "":
             print("OpenWebUI/BLENDER/get_model_code - Empty content received")
@@ -257,6 +306,21 @@ class Action:
         chat_id: str,
         msg_id: str,
     ) -> Tuple[str, str]:
+        """
+        Renders the model code given into html components for display.
+
+        Args:
+            model_code (str): The code for the model to be rendered.
+            chat_id (str): The id of the chat for which the model is being generated
+            msg_id (str): The id of the message for which the model is being generated
+
+        Returns:
+            Tuple[str, str]: The filename of the stl model produced (to allow for downloading)
+                and the html code for displaying the model.
+
+        Raises:
+            httpx.RequestError: If an error response is received from the blender render server.
+        """
         print("OpenWebUI/BLENDER/render_model_to_html - Rendering model to HTML...")
         model = await self.render_model(
             model_code,
@@ -273,6 +337,18 @@ class Action:
         self,
         model_code: str,
     ) -> bytes:
+        """
+        Makes a request for the blender render server to render a model from the given code.
+
+        Args:
+            model_code (str): The code for the model to be rendered.
+
+        Returns:
+            bytes: The raw bytes of the stl file rendered by the server.
+
+        Raises:
+            httpx.RequestError: If an error response is received from the blender render server.
+        """
         payload = {"model_code": model_code}
         print(
             "OpenWebUI/BLENDER/render_model - Requesting STL from blender render server..."
@@ -289,6 +365,18 @@ class Action:
     async def generate_model_html(
         self, model: bytes, chat_id: str, msg_id: str
     ) -> Tuple[str, str]:
+        """
+        Makes a request for the blender render server to render a model from the given code.
+
+        Args:
+            model (bytes): The raw bytes of the stl file rendered by the server.
+            chat_id (str): The id of the chat for which the model is being generated
+            msg_id (str): The id of the message for which the model is being generated
+
+        Returns:
+            Tuple[str, str]: The filename of the stl model produced (to allow for downloading)
+                and the html code for displaying the model.
+        """
         print("OpenWebUI/BLENDER/generate_model_html - Generating model HTML...")
         model_cache = Path("data") / self.cache / "models"
         existing_models = len([*model_cache.glob(f"{chat_id}-model-{msg_id}*.stl")])
@@ -305,12 +393,28 @@ class Action:
         return stl_filename, stl_html
 
     async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
+        """
+        Writes model bytes to a file in the cache.
+
+        Args:
+            model (bytes): The raw bytes of the stl file rendered by the server.
+            stl_filepath (Path): The path to write the stl file to.
+        """
         print("OpenWebUI/BLENDER/write_model_to_cache - Writing model data to cache...")
         with stl_filepath.open("wb") as stl_file:
             stl_file.write(model)
         print("OpenWebUI/BLENDER/write_model_to_cache - Model data cached!")
 
     async def template_html(self, stl_filename: str) -> str:
+        """
+        Generates the HTML for model display from a template.
+
+        Args:
+            stl_filename (str): The name of the file in which the model to be displayed is stored.
+
+        Returns:
+            str: The HTML for displaying the model.
+        """
         print("OpenWebUI/BLENDER/template_html - Templating HTML...")
         return f"""<script src="{self.valves.OPENWEBUI_BASE_URL}{self.cache}/js/stl_viewer.min.js"></script>
 <script>
