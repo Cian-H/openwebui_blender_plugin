@@ -3,7 +3,7 @@ title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
 version: 0.0.2
 license: MIT
-requirements: pydantic, requests
+requirements: httpx, pydantic
 environment_variables: OPENWEBUI_BASE_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
 """
 
@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-import requests
+import httpx
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -75,10 +75,15 @@ class Action:
             OPENWEBUI_BASE_URL=os.getenv("OPENWEBUI_BASE_URL", ""),
         )
         self.cache = "cache/blender_render/"
-        self.download_stlview()
+        asyncio.run(self.download_stlview())
 
-    def download_stlview(self):
-        """Download all stlview files if they don't exist locally"""
+    async def download_stlview(self):
+        """
+        Download all stlview files if they don't exist locally.
+
+        Raises:
+            httpx.RequestError: If the download of a STLView module fails.
+        """
         files = [
             "stl_viewer.min.js",
             "three.min.js",
@@ -98,12 +103,15 @@ class Action:
             if not filepath.exists():
                 print(f"OpenWebUI/BLENDER/download_stlview - Downloading {file}")
                 try:
-                    response = requests.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
-                    if response.status_code == 200:
-                        with open(filepath, "wb") as f:
-                            f.write(response.content)
+                    async with httpx.AsyncClient() as client:
+                        response = await client.get(
+                            f"{self.valves.STLVIEW_CDN_URL}{file}"
+                        )
+                        if response.status_code == 200:
+                            with open(filepath, "wb") as f:
+                                f.write(response.content)
                 except Exception as e:
-                    raise requests.RequestException(f"Error downloading {file}: {e}")
+                    raise httpx.RequestError(f"Error downloading {file}: {e}")
             else:
                 print(
                     f"OpenWebUI/BLENDER/download_stlview - Skipping {file} (already exists)"
@@ -257,7 +265,7 @@ class Action:
             model, chat_id, msg_id
         )
         if not model_html:
-            raise requests.RequestException("Request to blender server failed")
+            raise httpx.RequestError("Request to blender server failed")
         print("OpenWebUI/BLENDER/render_model_to_html - Model HTML rendered!")
         return model_filename, model_html
 
@@ -269,10 +277,11 @@ class Action:
         print(
             "OpenWebUI/BLENDER/render_model - Requesting STL from blender render server..."
         )
-        response = requests.post(
-            f"{self.valves.BLENDER_SERVER_URL}create_model",
-            json=payload,
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.valves.BLENDER_SERVER_URL}create_model",
+                json=payload,
+            )
         response.raise_for_status()
         print("OpenWebUI/BLENDER/render_model - Response received!")
         return response.content
