@@ -90,7 +90,7 @@ class Action:
             OPENWEBUI_BASE_URL=os.getenv("OPENWEBUI_BASE_URL", ""),
         )
         self.cache = "cache/blender_render/"
-        asyncio.run(self.download_stlview())
+        asyncio.ensure_future(self.download_stlview(), loop=asyncio.get_event_loop())
 
     async def download_stlview(self):
         """
