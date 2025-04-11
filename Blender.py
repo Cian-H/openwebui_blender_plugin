@@ -111,14 +111,14 @@ class Action:
         ]
 
         print("OpenWebUI/BLENDER - Caching stlview JS files")
-        js_cache = Path("data") / self.cache
+        js_cache = Path("data") / self.cache / "js"
         js_cache.mkdir(parents=True, exist_ok=True)
         for file in files:
             filepath = js_cache / file
             if not filepath.exists():
                 print(f"OpenWebUI/BLENDER/download_stlview - Downloading {file}")
                 try:
-                    with httpx.AsyncClient() as client:
+                    with httpx.Client() as client:
                         response = client.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
                         if response.status_code == 200:
                             with open(filepath, "wb") as f:
@@ -406,7 +406,7 @@ class Action:
             str: The HTML for displaying the model.
         """
         print("OpenWebUI/BLENDER/template_html - Templating HTML...")
-        return f"""<script src="{self.valves.OPENWEBUI_BASE_URL}{self.cache}/js/stl_viewer.min.js"></script>
+        return f"""<script src="{self.valves.OPENWEBUI_BASE_URL}{self.cache}js/stl_viewer.min.js"></script>
 <script>
     var stl_viewer = new StlViewer(
         document.getElementById("stl_cont"),
