@@ -2,10 +2,10 @@
 title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
 author_url: https://github.com/Cian-H
-version: 0.1.2
+version: 0.2.0
 license: MIT
 requirements: httpx, pydantic
-environment_variables: OPENWEBUI_BASE_URL, BLENDER_SERVER_URL, STLVIEW_CDN_URL
+environment_variables: BLENDER_SERVER_URL
 """
 
 import asyncio
@@ -39,28 +39,16 @@ class Action:
         Pydantic model for storing the server url.
 
         Attributes:
-            OPENWEBUI_BASE_URL (str): The base URL for the OpenWebUI instance.
             BLENDER_SERVER_URL (str): The URL for the Blender render server.
-            STLVIEW_CDN_URL (str): The URL for the STLView CDN to be used.
         """
 
-        OPENWEBUI_BASE_URL: str = Field(
-            default="",
-            description="The base URL for the OpenWebUI instance.",
-            validate_default=True,
-        )
         BLENDER_SERVER_URL: str = Field(
             default="",
             description="The URL for your Blender render server.",
             validate_default=True,
         )
-        STLVIEW_CDN_URL: str = Field(
-            default="https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
-            description="The URL for the STLView CDN to be used.",
-            validate_default=True,
-        )
 
-        @field_validator("OPENWEBUI_BASE_URL", "BLENDER_SERVER_URL", "STLVIEW_CDN_URL")
+        @field_validator("BLENDER_SERVER_URL")
         @staticmethod
         def ensure_trailing_slash(s: str) -> str:
             """
@@ -77,58 +65,13 @@ class Action:
     def __init__(self):
         """
         Initialize the Action class with default values and environment variables.
-        Also, ensure the STLView library is present in the blender_render cache.
         """
         self.id = "BLENDER"
         self.name = "Blender: "
         self.valves = self.Valves(
             BLENDER_SERVER_URL=os.getenv("BLENDER_SERVER_URL", ""),
-            STLVIEW_CDN_URL=os.getenv(
-                "STLVIEW_CDN_URL",
-                "https://cdn.jsdelivr.net/gh/omrips/viewstl@v1.13/build/",
-            ),
-            OPENWEBUI_BASE_URL=os.getenv("OPENWEBUI_BASE_URL", ""),
         )
         self.cache = "cache/blender_render/"
-        self.download_stlview()
-
-    def download_stlview(self):
-        """
-        Download all stlview files if they don't exist locally.
-
-        Raises:
-            httpx.RequestError: If the download of a STLView module fails.
-        """
-        files = [
-            "stl_viewer.min.js",
-            "three.min.js",
-            "webgl_detector.js",
-            "Projector.js",
-            "CanvasRenderer.js",
-            "OrbitControls.js",
-            "load_stl.min.js",
-            "parser.min.js",
-        ]
-
-        print("OpenWebUI/BLENDER - Caching stlview JS files")
-        js_cache = Path("data") / self.cache / "js"
-        js_cache.mkdir(parents=True, exist_ok=True)
-        for file in files:
-            filepath = js_cache / file
-            if not filepath.exists():
-                print(f"OpenWebUI/BLENDER/download_stlview - Downloading {file}")
-                try:
-                    with httpx.Client() as client:
-                        response = client.get(f"{self.valves.STLVIEW_CDN_URL}{file}")
-                        if response.status_code == 200:
-                            with open(filepath, "wb") as f:
-                                f.write(response.content)
-                except Exception as e:
-                    raise httpx.RequestError(f"Error downloading {file}: {e}")
-            else:
-                print(
-                    f"OpenWebUI/BLENDER/download_stlview - Skipping {file} (already exists)"
-                )
 
     async def action(
         self,
@@ -138,7 +81,7 @@ class Action:
         __event_call__: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ):
         """
-        An action that renders and displays stl models from generated python code
+        An action that renders and displays glb models from generated python code
         using the `bpy` library. Model code to be rendered must be given in the form
         of a python function with the type signature `model() -> bpy.types.Object`.
 
@@ -210,7 +153,7 @@ class Action:
                 "type": "message",
                 "data": {
                     "description": "A 3d model rendered based on the blender code provided.",
-                    "content": f"\n\n```html\n{model_html}\n```\n\n[Download model]({self.valves.OPENWEBUI_BASE_URL}{self.cache}models/{model_filename})\n",
+                    "content": f"\n\n```html\n{model_html}\n```\n\n[Download model](/{self.cache}models/{model_filename})\n",
                 },
             }
         )
@@ -307,7 +250,7 @@ class Action:
             msg_id (str): The id of the message for which the model is being generated
 
         Returns:
-            Tuple[str, str]: The filename of the stl model produced (to allow for downloading)
+            Tuple[str, str]: The filename of the glb model produced (to allow for downloading)
                 and the html code for displaying the model.
 
         Raises:
@@ -334,14 +277,14 @@ class Action:
             model_code (str): The code for the model to be rendered.
 
         Returns:
-            bytes: The raw bytes of the stl file rendered by the server.
+            bytes: The raw bytes of the glb file rendered by the server.
 
         Raises:
             httpx.RequestError: If an error response is received from the blender render server.
         """
         payload = {"model_code": model_code}
         print(
-            "OpenWebUI/BLENDER/render_model - Requesting STL from blender render server..."
+            "OpenWebUI/BLENDER/render_model - Requesting GLB from blender render server..."
         )
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -359,68 +302,57 @@ class Action:
         Makes a request for the blender render server to render a model from the given code.
 
         Args:
-            model (bytes): The raw bytes of the stl file rendered by the server.
+            model (bytes): The raw bytes of the glb file rendered by the server.
             chat_id (str): The id of the chat for which the model is being generated
             msg_id (str): The id of the message for which the model is being generated
 
         Returns:
-            Tuple[str, str]: The filename of the stl model produced (to allow for downloading)
+            Tuple[str, str]: The filename of the glb model produced (to allow for downloading)
                 and the html code for displaying the model.
         """
         print("OpenWebUI/BLENDER/generate_model_html - Generating model HTML...")
         model_cache = Path("data") / self.cache / "models"
-        existing_models = len([*model_cache.glob(f"{chat_id}-model-{msg_id}*.stl")])
-        stl_filename = f"{chat_id}-model-{msg_id}-{existing_models}.stl"
-        stl_filepath = (
-            (model_cache / stl_filename).resolve().relative_to(Path().resolve())
+        existing_models = len([*model_cache.glob(f"{chat_id}-model-{msg_id}*.glb")])
+        glb_filename = f"{chat_id}-model-{msg_id}-{existing_models}.glb"
+        glb_filepath = (
+            (model_cache / glb_filename).resolve().relative_to(Path().resolve())
         )
         model_cache.mkdir(parents=True, exist_ok=True)
-        t1 = asyncio.create_task(self.write_model_to_cache(model, stl_filepath))
-        stl_html = await self.template_html(stl_filename)
-        print("OpenWebUI/BLENDER/generate_model_html - HTML templated!")
-        await t1
-        print("OpenWebUI/BLENDER/generate_model_html - Model HTML generated!")
-        return stl_filename, stl_html
+        write_model_task = asyncio.create_task(
+            self.write_model_to_cache(model, glb_filepath)
+        )
+        template_html_task = asyncio.create_task(self.template_html(glb_filename))
+        await write_model_task
+        print("OpenWebUI/BLENDER/generate_model_html - Model GLB generated!")
+        return glb_filename, await template_html_task
 
-    async def write_model_to_cache(self, model: bytes, stl_filepath: Path):
+    async def write_model_to_cache(self, model: bytes, glb_filepath: Path):
         """
         Writes model bytes to a file in the cache.
 
         Args:
-            model (bytes): The raw bytes of the stl file rendered by the server.
-            stl_filepath (Path): The path to write the stl file to.
+            model (bytes): The raw bytes of the glb file rendered by the server.
+            glb_filepath (Path): The path to write the glb file to.
         """
         print("OpenWebUI/BLENDER/write_model_to_cache - Writing model data to cache...")
-        with stl_filepath.open("wb") as stl_file:
-            stl_file.write(model)
+        with glb_filepath.open("wb") as glb_file:
+            glb_file.write(model)
         print("OpenWebUI/BLENDER/write_model_to_cache - Model data cached!")
 
-    async def template_html(self, stl_filename: str) -> str:
+    async def template_html(self, glb_filename: str) -> str:
         """
-        Generates the HTML for model display from a template.
-
-        Args:
-            stl_filename (str): The name of the file in which the model to be displayed is stored.
-
-        Returns:
-            str: The HTML for displaying the model.
+        Generates HTML using Google's model-viewer web component.
         """
-        print("OpenWebUI/BLENDER/template_html - Templating HTML...")
-        return f"""<script src="{self.valves.OPENWEBUI_BASE_URL}{self.cache}js/stl_viewer.min.js"></script>
-<script>
-    var stl_viewer = new StlViewer(
-        document.getElementById("stl_cont"),
-        {{
-            models: [
-                {{
-                    filename: "{self.valves.OPENWEBUI_BASE_URL}{self.cache}models/{stl_filename}",
-                    rotation: {{x: 0, y: 0, z: 0}},
-                    position: {{x: 0, y: 0, z: 0}},
-                    scale: 1.0
-                }}
-            ],
-            background: {{color: "#FFFFFF"}},
-        }}
-    );
-</script>
-<div id="stl_cont" style="width: 500px; height: 500px;"></div>"""
+        print("OpenWebUI/BLENDER/template_html - Creating model-viewer template...")
+
+        model_path = f"/{self.cache}models/{glb_filename}"
+
+        return f"""<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+<model-viewer
+    src="{model_path}"
+    camera-controls
+    auto-rotate
+    shadow-intensity="1"
+    style="width: 100vw; height: 100vw; background-color: #171717;"
+    alt="3D model rendered from Blender code">
+</model-viewer>"""
