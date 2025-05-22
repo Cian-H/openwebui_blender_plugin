@@ -2,9 +2,9 @@
 title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
 author_url: https://github.com/Cian-H
-version: 0.2.0
+version: 0.3.0
 license: MIT
-requirements: httpx, pydantic
+requirements: httpx, pydantic, trimesh
 environment_variables: BLENDER_SERVER_URL
 """
 
@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
+import trimesh
 
 
 async def dummy_emitter(_: Dict[str, Any]) -> None:
@@ -154,6 +155,13 @@ class Action:
             model_filename, model_html = await self.render_model_to_html(
                 model_code, chat_id, msg_id
             )
+            model_conversion_task = asyncio.create_task(
+                self.convert_glb_to_obj(
+                    (Path("data") / self.cache / "models" / model_filename)
+                    .resolve()
+                    .relative_to(Path().resolve())
+                )
+            )
             await __event_emitter__(
                 {
                     "type": "status",
@@ -172,7 +180,19 @@ class Action:
                     "type": "message",
                     "data": {
                         "description": "A 3d model rendered based on the blender code provided.",
-                        "content": f"\n\n```html\n{model_html}\n```\n\n[Download model](/{self.cache}models/{model_filename})\n",
+                        "content": f"\n\n```html\n{model_html}\n```\n",
+                    },
+                }
+            )
+            print("OpenWebUI/BLENDER/action - Awaiting conversion from GLB to STL...")
+            obj_path = await model_conversion_task
+            obj_endpoint = str(obj_path.relative_to(Path("data")))
+            await __event_emitter__(
+                {
+                    "type": "message",
+                    "data": {
+                        "description": "A 3d model rendered based on the blender code provided.",
+                        "content": f"\n[Download model](/{obj_endpoint})\n",
                     },
                 }
             )
@@ -184,6 +204,7 @@ The Blender render server reported the following error:
 
 ```
 {error.message}
+
 ```
 
 ### Details
@@ -429,3 +450,9 @@ Would you like me to correct this error?
     style="width: 100vw; height: 100vw; background-color: #171717;"
     alt="3D model rendered from Blender code">
 </model-viewer>"""
+
+    async def convert_glb_to_obj(self, glb_path: Path) -> Path:
+        assert glb_path.exists()
+        obj_path = glb_path.with_suffix(".obj")
+        trimesh.load(glb_path).export(obj_path)
+        return obj_path
