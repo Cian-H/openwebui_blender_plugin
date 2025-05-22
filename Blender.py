@@ -2,7 +2,7 @@
 title: Blender Rendering Function for OpenWebUI
 author: Cian Hughes
 author_url: https://github.com/Cian-H
-version: 0.3.0
+version: 0.3.1
 license: MIT
 requirements: httpx, pydantic, trimesh
 environment_variables: BLENDER_SERVER_URL
@@ -442,13 +442,16 @@ Would you like me to correct this error?
         model_path = f"/{self.cache}models/{glb_filename}"
 
         return f"""<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+<script type="module">
+  const modelViewer = document.getElementById("mv");
+  modelViewer.addEventListener("load", () => {{
+    modelViewer.model.materials[0].pbrMetallicRoughness.setBaseColorFactor("#b3b3b3");
+  }});
+</script>
 <model-viewer
     src="{model_path}"
-    camera-controls
-    auto-rotate
-    shadow-intensity="1"
-    style="width: 100vw; height: 100vw; background-color: #171717;"
-    alt="3D model rendered from Blender code">
+    id="mv" camera-controls auto-rotate shadow-intensity="1" shadow-softness="0.5"
+    style="width: 100vw; height: 100vh;">
 </model-viewer>"""
 
     async def convert_glb_to_obj(self, glb_path: Path) -> Path:
