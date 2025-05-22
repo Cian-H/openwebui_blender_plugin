@@ -9,7 +9,7 @@ environment_variables: BLENDER_SERVER_URL
 """
 
 import asyncio
-
+import json
 import os
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -21,6 +21,23 @@ from pydantic import BaseModel, Field, field_validator
 async def dummy_emitter(_: Dict[str, Any]) -> None:
     """A dummy emitter to satisfy type checks in the `Action.action` method."""
     pass
+
+
+class BlenderRenderError(Exception):
+    """
+    Exception raised when the Blender render server returns an error.
+
+    Attributes:
+        message (str): The error message
+        details (str): Additional details about the error
+        blender_log (str): The Blender output log containing Python errors
+    """
+
+    def __init__(self, message: str, details: str, blender_log: str):
+        self.message = message
+        self.details = details
+        self.blender_log = blender_log
+        super().__init__(self.message)
 
 
 class Action:
@@ -132,38 +149,72 @@ class Action:
                 "data": {"description": "Rendering 3d model...", "done": False},
             }
         )
-        model_filename, model_html = await self.render_model_to_html(
-            model_code, chat_id, msg_id
-        )
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "Rendering 3d model...", "done": True},
-            }
-        )
-        print("OpenWebUI/BLENDER/action - Displaying 3d model as artifact...")
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "Displaying 3d model...", "done": False},
-            }
-        )
-        await __event_emitter__(
-            {
-                "type": "message",
-                "data": {
-                    "description": "A 3d model rendered based on the blender code provided.",
-                    "content": f"\n\n```html\n{model_html}\n```\n\n[Download model](/{self.cache}models/{model_filename})\n",
-                },
-            }
-        )
-        await __event_emitter__(
-            {
-                "type": "status",
-                "data": {"description": "Displaying 3d model...", "done": True},
-            }
-        )
-        print("OpenWebUI/BLENDER/action - Action complete!")
+
+        try:
+            model_filename, model_html = await self.render_model_to_html(
+                model_code, chat_id, msg_id
+            )
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "Rendering 3d model...", "done": True},
+                }
+            )
+            print("OpenWebUI/BLENDER/action - Displaying 3d model as artifact...")
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "Displaying 3d model...", "done": False},
+                }
+            )
+            await __event_emitter__(
+                {
+                    "type": "message",
+                    "data": {
+                        "description": "A 3d model rendered based on the blender code provided.",
+                        "content": f"\n\n```html\n{model_html}\n```\n\n[Download model](/{self.cache}models/{model_filename})\n",
+                    },
+                }
+            )
+        except BlenderRenderError as error:
+            error_message = f"""
+## Error Rendering Blender Model
+
+The Blender render server reported the following error:
+
+```
+{error.message}
+```
+
+### Details
+{error.details}
+
+### Blender Log
+```
+{error.blender_log}
+```
+
+Would you like me to correct this error?
+"""
+            await __event_emitter__(
+                {
+                    "type": "message",
+                    "data": {
+                        "description": "Error rendering 3d model",
+                        "content": error_message,
+                        "role": "assistant",
+                    },
+                }
+            )
+
+        finally:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "Displaying 3d model...", "done": True},
+                }
+            )
+            print("OpenWebUI/BLENDER/action - Action complete!")
 
     @staticmethod
     async def get_msg(body: Dict, msg_id: str) -> Dict:
@@ -287,13 +338,35 @@ class Action:
             "OpenWebUI/BLENDER/render_model - Requesting GLB from blender render server..."
         )
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.valves.BLENDER_SERVER_URL}create_model",
-                json=payload,
-            )
-        response.raise_for_status()
-        print("OpenWebUI/BLENDER/render_model - Response received!")
-        return response.content
+            try:
+                response = await client.post(
+                    f"{self.valves.BLENDER_SERVER_URL}create_model",
+                    json=payload,
+                )
+
+                # Check if the response is an error (HTTP 4xx or 5xx status)
+                if 400 <= response.status_code < 600:
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", "Unknown error")
+                        details = error_data.get("details", "")
+                        blender_log = error_data.get("blender_log", "")
+                        raise BlenderRenderError(error_msg, details, blender_log)
+                    except json.JSONDecodeError:
+                        raise BlenderRenderError(
+                            f"HTTP {response.status_code}", response.text, ""
+                        )
+
+                response.raise_for_status()
+                print("OpenWebUI/BLENDER/render_model - Response received!")
+                return response.content
+
+            except httpx.RequestError as e:
+                raise BlenderRenderError(
+                    f"Network error: {str(e)}",
+                    "Could not connect to the Blender render server. Please check that it's running.",
+                    "",
+                )
 
     async def generate_model_html(
         self, model: bytes, chat_id: str, msg_id: str
